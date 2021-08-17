@@ -1,0 +1,3 @@
+check program check-temp with path /usr/local/bin/check-temp.sh
+    if status = 1 for 2 cycles then alert
+    if status > 38 for 5 cycles then alert
