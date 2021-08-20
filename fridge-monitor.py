@@ -11,14 +11,18 @@
 
 import os
 import sys
+import time
 from w1thermsensor import W1ThermSensor, Unit
 import json
 from datetime import datetime
 from board import SCL, SDA
 from PIL import Image, ImageDraw, ImageFont
 import adafruit_ssd1306
+import busio
 import logging
 import logging.handlers
+from statistics import stdev
+import atexit
 
 logger = logging.getLogger('MyLogger')
 logger.setLevel(logging.DEBUG)
@@ -27,19 +31,31 @@ logger.addHandler(handler)
 
 max_age=int(os.getenv('MAX_AGE', 300))
 results_file=os.getenv('RESULTS_FILE', "/run/user/1000/temp_results")
-logger.info(f"Results File: {results_file}, Max Age: {max_age}")
-
+enable_syslog=os.getenv('ENABLE_SYSLOG', 0)
+pid_file=os.getenv('PID_FILE', "/run/fridge-monitor.pid")
 cache=dict()
 latest=int()
 max_temp=float()
 min_temp=float(10000000)
 last_temp=float()
 
+def log_error(line):
+    if enable_syslog == 1:
+        logger.error(line)
+def log_warn(line):
+    if enable_syslog == 1:
+        logger.warn(line)
+def log_info(line):
+    if enable_syslog == 1:
+        logger.info(line)
 
 def Average(lst):
     if not lst:
         return -1
     return float(f"{sum(lst) / len(lst):.1f}")
+
+def Standard_Deviation(lst):
+   return float(f"{stdev(lst):.1f}")
 
 def get_temp(sensor):
     return float(f"{sensor.get_temperature(Unit.DEGREES_F):.1f}")
@@ -57,6 +73,7 @@ def calculate_temp(current):
             "temp": current,
             "time": now,
             "last": current,
+            "stdev": 0,
         }
         cache[now]=new
         return
@@ -87,7 +104,8 @@ def calculate_temp(current):
         "max": max_temp,
         "temp": current,
         "time": now,
-        "last": last_temp
+        "last": last_temp,
+        "stdev": Standard_Deviation(past_temp),
     }
     cache[now]=new
     last_temp=current
@@ -113,7 +131,7 @@ def draw_display(draw, disp, width, height, top, x, image, font, err=None):
        draw.text((x, top+16), err, font=font, fill=255)
        disp.image(image)
        disp.show()
-       logger.error(err)
+       log_error(err)
        sys.exit(1)
 
     ref=cache[latest]
@@ -136,10 +154,30 @@ def draw_display(draw, disp, width, height, top, x, image, font, err=None):
     disp.image(image)
     disp.show()
 
-if __name__ == '__main__':
-    logger.info("Starting up")
+def all_done():
+    os.remove(pid_file)
+
+def write_pid_file():
+    pid = str(os.getpid())
+    f = open(pid_file, 'w')
+    f.write(pid)
+    f.close()
+
+def init():
+    if os.path.exists(pid_file):
+       log_error(f"The pid fle {pid_file} already exists")
+       sys.exit(1)
+
     if os.path.exists(results_file):
         os.remove(results_file)
+
+    atexit.register(all_done)
+    write_pid_file()
+
+    log_info(f"Results File: {results_file}, Max Age: {max_age}, Pid File {pid_file}, enable_syslog: {enable_syslog}")
+
+if __name__ == '__main__':
+    init()
 
     # Create the I2C interface.
     i2c = busio.I2C(SCL, SDA)
@@ -181,5 +219,5 @@ if __name__ == '__main__':
         calculate_temp(current)
         write_results()
         draw_display(draw, disp, width, height, top, x, image, font)
-        logger.info(f"- {cache[latest]}")
+        log_info(f"- {cache[latest]}")
         time.sleep(2)

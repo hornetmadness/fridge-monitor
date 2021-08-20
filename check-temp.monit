@@ -1,3 +1,7 @@
 check program check-temp with path /usr/local/bin/check-temp.sh
     if status = 1 for 2 cycles then alert
     if status > 38 for 5 cycles then alert
+
+check process fridge-monitor with pidfile /run/fridge-monitor.pid
+   start program = "/bin/systemctl start fridge-monitor.service"
+   stop  program = "/bin/systemctl stop fridge-monitor.service"
